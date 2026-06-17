@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../main.dart';
 
 class VoltWiseDrawer extends StatelessWidget {
   const VoltWiseDrawer({super.key});
@@ -10,7 +11,9 @@ class VoltWiseDrawer extends StatelessWidget {
         padding: EdgeInsets.zero,
         children: [
           const UserAccountsDrawerHeader(
-            decoration: BoxDecoration(color: Color(0xff0B6EF6)),
+            decoration: BoxDecoration(
+              color: Color(0xff0B6EF6),
+            ),
             accountName: Text('Millius N. Liswaniso'),
             accountEmail: Text('milliusn@gmail.com'),
             currentAccountPicture: CircleAvatar(
@@ -22,39 +25,79 @@ class VoltWiseDrawer extends StatelessWidget {
               ),
             ),
           ),
-          ListTile(
-            leading: const Icon(Icons.person_outline),
-            title: const Text('Profile'),
-            onTap: () => Navigator.pop(context),
+          _drawerItem(
+            context,
+            Icons.person_outline,
+            'Profile',
+            const ProfilePage(),
           ),
-          ListTile(
-            leading: const Icon(Icons.settings_outlined),
-            title: const Text('Settings'),
-            onTap: () => Navigator.pop(context),
+          _drawerItem(
+            context,
+            Icons.settings_outlined,
+            'Settings',
+            const SettingsPage(),
           ),
-          ListTile(
-            leading: const Icon(Icons.history),
-            title: const Text('Usage History'),
-            onTap: () => Navigator.pop(context),
+          _drawerItem(
+            context,
+            Icons.history,
+            'Usage History',
+            const UsageHistoryPage(),
           ),
-          ListTile(
-            leading: const Icon(Icons.help_outline),
-            title: const Text('Help & Support'),
-            onTap: () => Navigator.pop(context),
+          _drawerItem(
+            context,
+            Icons.help_outline,
+            'Help & Support',
+            const HelpSupportPage(),
+          ),
+          _drawerItem(
+            context,
+            Icons.info_outline,
+            'About VoltWise',
+            const AboutVoltWisePage(),
           ),
           const Divider(),
           ListTile(
-            leading: const Icon(Icons.logout, color: Colors.red),
+            leading: const Icon(
+              Icons.logout,
+              color: Colors.red,
+            ),
             title: const Text(
               'Logout',
               style: TextStyle(color: Colors.red),
             ),
             onTap: () {
+              Navigator.pop(context);
               Navigator.pushReplacementNamed(context, '/');
             },
           ),
         ],
       ),
+    );
+  }
+
+  static Widget _drawerItem(
+    BuildContext context,
+    IconData icon,
+    String title,
+    Widget page,
+  ) {
+    return ListTile(
+      leading: Icon(
+        icon,
+        color: const Color(0xff0B6EF6),
+      ),
+      title: Text(title),
+      trailing: const Icon(
+        Icons.arrow_forward_ios,
+        size: 14,
+      ),
+      onTap: () {
+        Navigator.pop(context);
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => page),
+        );
+      },
     );
   }
 }
