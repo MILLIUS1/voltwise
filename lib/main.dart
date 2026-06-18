@@ -88,6 +88,7 @@ class _MainShellState extends State<MainShell> {
       final status = item['status'] == true;
 
       return Appliance(
+        item['id'] ?? 0,
         name,
         priority[0] + priority.substring(1).toLowerCase(),
         '$powerRating W',
@@ -120,14 +121,35 @@ class _MainShellState extends State<MainShell> {
     return Colors.green;
   }
 
-  void updateAppliancePriority(String applianceName, String newPriority) {
-    // Local UI update only for now.
-    // Backend update will be added next.
+  Future<void> updateAppliancePriority(
+    String applianceName,
+    String newPriority,
+  ) async {
+    final appliances = mapApiAppliances(await appliancesFuture);
+    final appliance = appliances.firstWhere(
+      (item) => item.name == applianceName,
+    );
+
+    await ApiService.updateAppliancePriority(
+      applianceId: appliance.id,
+      priority: newPriority,
+    );
+
+    await refreshAppliances();
   }
 
-  void updateApplianceStatus(String applianceName, bool isOn) {
-    // Local UI update only for now.
-    // Backend update will be added next.
+  Future<void> updateApplianceStatus(String applianceName, bool isOn) async {
+    final appliances = mapApiAppliances(await appliancesFuture);
+    final appliance = appliances.firstWhere(
+      (item) => item.name == applianceName,
+    );
+
+    await ApiService.updateApplianceStatus(
+      applianceId: appliance.id,
+      status: isOn,
+    );
+
+    await refreshAppliances();
   }
 
   Widget get currentPage {
@@ -426,8 +448,8 @@ class _HomeDashboardState extends State<HomeDashboard> {
 
 class ApplianceScreen extends StatefulWidget {
   final List<Appliance> appliances;
-  final void Function(String applianceName, String newPriority) onPriorityChanged;
-  final void Function(String applianceName, bool isOn) onStatusChanged;
+  final Future<void> Function(String applianceName, String newPriority) onPriorityChanged;
+  final Future<void> Function(String applianceName, bool isOn) onStatusChanged;
 
   const ApplianceScreen({
     super.key,
@@ -497,9 +519,19 @@ class _ApplianceScreenState extends State<ApplianceScreen> {
         ...filteredAppliances.map(
           (a) => ApplianceTile(
             appliance: a,
-            onStatusChanged: (value) {
-              widget.onStatusChanged(a.name, value);
-              setState(() {});
+            onStatusChanged: (value) async {
+              final previousStatus = a.isOn;
+              setState(() => a.isOn = value);
+
+              try {
+                await widget.onStatusChanged(a.name, value);
+              } catch (error) {
+                if (!mounted) return;
+                setState(() => a.isOn = previousStatus);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Failed to update ${a.name}: $error')),
+                );
+              }
             },
           ),
         ),
@@ -545,7 +577,7 @@ class _ApplianceScreenState extends State<ApplianceScreen> {
 
 class ManagePriorityScreen extends StatefulWidget {
   final List<Appliance> appliances;
-  final void Function(String applianceName, String newPriority) onPriorityChanged;
+  final Future<void> Function(String applianceName, String newPriority) onPriorityChanged;
 
   const ManagePriorityScreen({
     super.key,
@@ -731,10 +763,23 @@ class _ManagePriorityScreenState extends State<ManagePriorityScreen> {
                             ),
                           );
                         }).toList(),
-                        onChanged: (value) {
+                        onChanged: (value) async {
                           if (value == null) return;
+
+                          final previousPriority = item.priority;
                           setState(() => item.priority = value);
-                          widget.onPriorityChanged(item.name, value);
+
+                          try {
+                            await widget.onPriorityChanged(item.name, value);
+                          } catch (error) {
+                            if (!mounted) return;
+                            setState(() => item.priority = previousPriority);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Failed to update ${item.name}: $error'),
+                              ),
+                            );
+                          }
                         },
                       ),
                       const SizedBox(height: 8),
@@ -818,8 +863,49 @@ class PrioritySummaryCard extends StatelessWidget {
 }
 
 
-class EnergyAutomationScreen extends StatelessWidget {
+class EnergyAutomationScreen extends StatefulWidget {
   const EnergyAutomationScreen({super.key});
+
+  @override
+  State<EnergyAutomationScreen> createState() => _EnergyAutomationScreenState();
+}
+
+class _EnergyAutomationScreenState extends State<EnergyAutomationScreen> {
+  late Future<List<dynamic>> alertsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    alertsFuture = ApiService.getAlerts();
+  }
+
+  Future<void> refreshAlerts() async {
+    setState(() {
+      alertsFuture = ApiService.getAlerts();
+    });
+  }
+
+  Color severityColor(String severity) {
+    switch (severity.toUpperCase()) {
+      case 'CRITICAL':
+        return Colors.red;
+      case 'WARNING':
+        return Colors.orange;
+      default:
+        return Colors.green;
+    }
+  }
+
+  IconData severityIcon(String severity) {
+    switch (severity.toUpperCase()) {
+      case 'CRITICAL':
+        return Icons.emergency;
+      case 'WARNING':
+        return Icons.warning_amber;
+      default:
+        return Icons.info;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -827,124 +913,204 @@ class EnergyAutomationScreen extends StatelessWidget {
     final critical = SystemSettings.criticalThreshold.round();
     final reserve = SystemSettings.reserveLevel.round();
 
-    final automations = [
-      AlertItem(
-        Icons.electric_bolt,
-        'Grid Power Failure',
-        'Grid supply failed. VoltWise automatically switched the home to battery backup.',
-        '10:30 AM',
-        Colors.red,
-        const Color(0xffFEECEC),
-      ),
-      AlertItem(
-        Icons.battery_saver,
-        'Battery Conservation Mode',
-        'Battery level reached $conservation%. Low-priority appliances were disconnected to extend backup time.',
-        '10:40 AM',
-        Colors.orange,
-        const Color(0xffFFF7E6),
-      ),
-      AlertItem(
-        Icons.lightbulb,
-        'Critical Power Mode',
-        'Battery level reached $critical%. Essential lighting and security cameras remain ON.',
-        '10:45 AM',
-        const Color(0xff0B6EF6),
-        const Color(0xffEEF6FF),
-      ),
-      AlertItem(
-        Icons.emergency,
-        'Emergency Reserve Mode',
-        'Battery reserve level reached $reserve%. Only protected emergency loads are maintained.',
-        '10:55 AM',
-        Colors.red,
-        const Color(0xffFEECEC),
-      ),
-      AlertItem(
-        Icons.check_circle,
-        'Grid Power Restored',
-        'Grid power returned. VoltWise resumed normal operation and restored eligible appliances.',
-        '02:15 PM',
-        Colors.green,
-        const Color(0xffEAF8EE),
-      ),
-    ];
+    return FutureBuilder<List<dynamic>>(
+      future: alertsFuture,
+      builder: (context, snapshot) {
+        final alerts = snapshot.data ?? [];
+        final warningCount = alerts.where((alert) {
+          return (alert['severity'] ?? '').toString().toUpperCase() == 'WARNING';
+        }).length;
 
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-      children: [
-        const AppHeader(
-          title: 'Energy Automation',
-          leftIcon: Icons.arrow_back_ios_new,
-          rightIcon: Icons.auto_awesome,
-        ),
-        Container(
-          padding: const EdgeInsets.all(18),
-          decoration: cardDecoration(const Color(0xffEEF6FF)),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        return RefreshIndicator(
+          onRefresh: refreshAlerts,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
             children: [
-              const Row(
-                children: [
-                  CircleAvatar(
-                    backgroundColor: Color(0xff0B6EF6),
-                    child: Icon(Icons.auto_awesome, color: Colors.white),
-                  ),
-                  SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Automated Energy Decisions',
-                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+              const AppHeader(
+                title: 'Energy Automation',
+                leftIcon: Icons.arrow_back_ios_new,
+                rightIcon: Icons.auto_awesome,
+              ),
+              Container(
+                padding: const EdgeInsets.all(18),
+                decoration: cardDecoration(const Color(0xffEEF6FF)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        CircleAvatar(
+                          backgroundColor: Color(0xff0B6EF6),
+                          child: Icon(Icons.auto_awesome, color: Colors.white),
+                        ),
+                        SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'Automated Energy Decisions',
+                            style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'VoltWise uses your Settings values to automate load control. Conservation: $conservation%, Critical: $critical%, Reserve: $reserve%.',
+                      style: const TextStyle(color: Colors.black54, height: 1.45),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  AutomationStatCard(
+                    value: '${alerts.length}',
+                    label: 'Alerts',
+                    icon: Icons.notifications_active,
+                    color: const Color(0xff0B6EF6),
+                  ),
+                  const SizedBox(width: 10),
+                  const AutomationStatCard(
+                    value: '4',
+                    label: 'Modes',
+                    icon: Icons.battery_saver,
+                    color: Colors.orange,
+                  ),
+                  const SizedBox(width: 10),
+                  AutomationStatCard(
+                    value: '$warningCount',
+                    label: 'Warnings',
+                    icon: Icons.warning_amber,
+                    color: Colors.red,
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
-              Text(
-                'VoltWise uses your Settings values to automate load control. Conservation: $conservation%, Critical: $critical%, Reserve: $reserve%.',
-                style: const TextStyle(color: Colors.black54, height: 1.45),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(18),
+                decoration: cardDecoration(Colors.white),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Battery Automation Rules',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+                    ),
+                    const SizedBox(height: 12),
+                    BatteryRuleRow(
+                      level: '> $conservation%',
+                      mode: 'Normal Operation',
+                      action: 'All appliances allowed',
+                      color: Colors.green,
+                    ),
+                    BatteryRuleRow(
+                      level: '≤ $conservation%',
+                      mode: 'Battery Conservation Mode',
+                      action: 'Low-priority appliances disconnected',
+                      color: Colors.orange,
+                    ),
+                    BatteryRuleRow(
+                      level: '≤ $critical%',
+                      mode: 'Critical Power Mode',
+                      action: 'Only high-priority appliances remain ON',
+                      color: const Color(0xff0B6EF6),
+                    ),
+                    BatteryRuleRow(
+                      level: '≤ $reserve%',
+                      mode: 'Emergency Reserve Mode',
+                      action: 'Emergency reserve protection active',
+                      color: Colors.red,
+                    ),
+                  ],
+                ),
               ),
+              const SizedBox(height: 16),
+              const Text(
+                'Live Automation Alerts',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 10),
+              if (!SystemSettings.notificationsEnabled)
+                Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: cardDecoration(Colors.white),
+                  child: const Text('Notifications are currently disabled in Settings.'),
+                )
+              else if (snapshot.connectionState == ConnectionState.waiting)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(24),
+                    child: CircularProgressIndicator(),
+                  ),
+                )
+              else if (snapshot.hasError)
+                Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: cardDecoration(Colors.white),
+                  child: Text(
+                    'Failed to load alerts: ${snapshot.error}',
+                    style: const TextStyle(color: Colors.red),
+                  ),
+                )
+              else if (alerts.isEmpty)
+                Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: cardDecoration(Colors.white),
+                  child: const Text('No automation alerts available.'),
+                )
+              else
+                ...alerts.map((alert) {
+                  final severity = (alert['severity'] ?? 'INFO').toString();
+                  final color = severityColor(severity);
+
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 14),
+                    padding: const EdgeInsets.all(16),
+                    decoration: cardDecoration(Colors.white),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          severityIcon(severity),
+                          size: 42,
+                          color: color,
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                alert['title'] ?? 'System Alert',
+                                style: TextStyle(
+                                  color: color,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(alert['message'] ?? ''),
+                              const SizedBox(height: 8),
+                              Text(
+                                alert['timestamp'] ?? '',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.black54,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
             ],
           ),
-        ),
-        const SizedBox(height: 16),
-        const Row(
-          children: [
-            AutomationStatCard(value: '5', label: 'Actions', icon: Icons.auto_awesome, color: Color(0xff0B6EF6)),
-            SizedBox(width: 10),
-            AutomationStatCard(value: '3', label: 'Modes', icon: Icons.battery_saver, color: Colors.orange),
-            SizedBox(width: 10),
-            AutomationStatCard(value: '1', label: 'Restored', icon: Icons.check_circle, color: Colors.green),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.all(18),
-          decoration: cardDecoration(Colors.white),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Battery Automation Rules', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
-              const SizedBox(height: 12),
-              BatteryRuleRow(level: '> $conservation%', mode: 'Normal Operation', action: 'All appliances allowed', color: Colors.green),
-              BatteryRuleRow(level: '≤ $conservation%', mode: 'Battery Conservation Mode', action: 'Low-priority appliances disconnected', color: Colors.orange),
-              BatteryRuleRow(level: '≤ $critical%', mode: 'Critical Power Mode', action: 'Essential lighting, Wi-Fi and security cameras remain ON', color: const Color(0xff0B6EF6)),
-              BatteryRuleRow(level: '≤ $reserve%', mode: 'Emergency Reserve Mode', action: 'Protected emergency reserve maintained', color: Colors.red),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        const Text('Automation Timeline', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
-        const SizedBox(height: 10),
-        if (SystemSettings.notificationsEnabled)
-          ...automations.map((a) => AlertCard(alert: a))
-        else
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: cardDecoration(Colors.white),
-            child: const Text('Notifications are currently disabled in Settings.'),
-          ),
-      ],
+        );
+      },
     );
   }
 }
@@ -1129,6 +1295,7 @@ class InfoCard extends StatelessWidget {
 }
 
 class Appliance {
+  final int id;
   final String name;
   String priority;
   final String power;
@@ -1136,7 +1303,15 @@ class Appliance {
   final Color color;
   bool isOn;
 
-  Appliance(this.name, this.priority, this.power, this.icon, this.color, this.isOn);
+  Appliance(
+    this.id,
+    this.name,
+    this.priority,
+    this.power,
+    this.icon,
+    this.color,
+    this.isOn,
+  );
 }
 
 class ApplianceTile extends StatelessWidget {
@@ -1670,8 +1845,81 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
+  bool isLoading = true;
+  bool isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    loadSettings();
+  }
+
+  Future<void> loadSettings() async {
+    try {
+      final settings = await ApiService.getSettings();
+
+      setState(() {
+        SystemSettings.conservationThreshold =
+            (settings['conservation_threshold'] as num).toDouble();
+        SystemSettings.criticalThreshold =
+            (settings['critical_threshold'] as num).toDouble();
+        SystemSettings.reserveLevel =
+            (settings['reserve_level'] as num).toDouble();
+        SystemSettings.notificationsEnabled =
+            settings['notifications_enabled'] ?? true;
+        SystemSettings.darkModeEnabled =
+            settings['dark_mode_enabled'] ?? false;
+        isLoading = false;
+      });
+    } catch (e) {
+      setState(() => isLoading = false);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Using local settings: $e')),
+      );
+    }
+  }
+
+  Future<void> saveSettings() async {
+    setState(() => isSaving = true);
+
+    try {
+      await ApiService.saveSettings(
+        conservationThreshold: SystemSettings.conservationThreshold,
+        criticalThreshold: SystemSettings.criticalThreshold,
+        reserveLevel: SystemSettings.reserveLevel,
+        notificationsEnabled: SystemSettings.notificationsEnabled,
+        darkModeEnabled: SystemSettings.darkModeEnabled,
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Settings saved successfully')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to save settings: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => isSaving = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (isLoading) {
+      return const Scaffold(
+        backgroundColor: Color(0xffF7F9FC),
+        body: SafeArea(
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      );
+    }
+
     return SimplePage(
       title: 'Settings',
       children: [
@@ -1683,7 +1931,11 @@ class _SettingsPageState extends State<SettingsPage> {
           min: 30,
           max: 80,
           unit: '%',
-          onChanged: (value) => setState(() => SystemSettings.conservationThreshold = value),
+          onChanged: (value) {
+            setState(() {
+              SystemSettings.conservationThreshold = value;
+            });
+          },
         ),
         settingsSlider(
           title: 'Critical Battery Threshold',
@@ -1693,7 +1945,11 @@ class _SettingsPageState extends State<SettingsPage> {
           min: 10,
           max: 40,
           unit: '%',
-          onChanged: (value) => setState(() => SystemSettings.criticalThreshold = value),
+          onChanged: (value) {
+            setState(() {
+              SystemSettings.criticalThreshold = value;
+            });
+          },
         ),
         settingsSlider(
           title: 'Battery Reserve Level',
@@ -1703,21 +1959,65 @@ class _SettingsPageState extends State<SettingsPage> {
           min: 5,
           max: 30,
           unit: '%',
-          onChanged: (value) => setState(() => SystemSettings.reserveLevel = value),
+          onChanged: (value) {
+            setState(() {
+              SystemSettings.reserveLevel = value;
+            });
+          },
         ),
         SwitchListTile(
           value: SystemSettings.notificationsEnabled,
-          onChanged: (value) => setState(() => SystemSettings.notificationsEnabled = value),
-          title: const Text('Notification Preferences', style: TextStyle(fontWeight: FontWeight.w800)),
+          onChanged: (value) {
+            setState(() {
+              SystemSettings.notificationsEnabled = value;
+            });
+          },
+          title: const Text(
+            'Notification Preferences',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
           subtitle: const Text('Receive system alerts and automation messages'),
-          secondary: const Icon(Icons.notifications, color: Color(0xFF16A34A)),
+          secondary: const Icon(
+            Icons.notifications,
+            color: Color(0xFF16A34A),
+          ),
         ),
         SwitchListTile(
           value: SystemSettings.darkModeEnabled,
-          onChanged: (value) => setState(() => SystemSettings.darkModeEnabled = value),
-          title: const Text('Dark Mode', style: TextStyle(fontWeight: FontWeight.w800)),
+          onChanged: (value) {
+            setState(() {
+              SystemSettings.darkModeEnabled = value;
+            });
+          },
+          title: const Text(
+            'Dark Mode',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
           subtitle: const Text('Enable dark appearance'),
-          secondary: const Icon(Icons.dark_mode, color: Color(0xFF16A34A)),
+          secondary: const Icon(
+            Icons.dark_mode,
+            color: Color(0xFF16A34A),
+          ),
+        ),
+        const SizedBox(height: 18),
+        ElevatedButton.icon(
+          onPressed: isSaving ? null : saveSettings,
+          icon: isSaving
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.save),
+          label: Text(isSaving ? 'Saving...' : 'Save Settings'),
+          style: ElevatedButton.styleFrom(
+            minimumSize: const Size.fromHeight(52),
+            backgroundColor: const Color(0xff16A34A),
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+          ),
         ),
       ],
     );
@@ -1751,12 +2051,24 @@ class _SettingsPageState extends State<SettingsPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
-                    Text(subtitle, style: const TextStyle(color: Colors.black54, fontSize: 12)),
+                    Text(
+                      title,
+                      style: const TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: Colors.black54,
+                        fontSize: 12,
+                      ),
+                    ),
                   ],
                 ),
               ),
-              Text('${value.round()}$unit', style: const TextStyle(fontWeight: FontWeight.w900)),
+              Text(
+                '${value.round()}$unit',
+                style: const TextStyle(fontWeight: FontWeight.w900),
+              ),
             ],
           ),
           Slider(
