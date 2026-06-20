@@ -202,4 +202,44 @@ class ApiService {
 
     throw Exception('Failed to load alerts. Status: ${response.statusCode}');
   }
+
+static Future<Map<String, dynamic>> getReportsSummary() async {
+  final response = await http.get(
+    Uri.parse('$baseUrl/reports/summary'),
+    headers: headers,
+  );
+
+  if (response.statusCode == 200) {
+    return jsonDecode(response.body);
+  }
+
+  throw Exception('Failed to load reports summary. Status: ${response.statusCode}');
+}
+
+static Future<List<dynamic>> getApplianceBreakdown() async {
+  final response = await http.get(
+    Uri.parse('$baseUrl/reports/appliance-breakdown'),
+    headers: headers,
+  );
+
+  if (response.statusCode == 200) {
+    return jsonDecode(response.body);
+  }
+
+  throw Exception('Failed to load appliance breakdown. Status: ${response.statusCode}');
+}
+
+static Future<List<dynamic>> getDailyReport() async {
+  final response = await http.get(
+    Uri.parse('$baseUrl/reports/daily'),
+    headers: headers,
+  );
+
+  if (response.statusCode == 200) {
+    return jsonDecode(response.body);
+  }
+  
+  throw Exception('Failed to load daily report. Status: ${response.statusCode}');
+  
+}  
 }

@@ -520,14 +520,11 @@ class _ApplianceScreenState extends State<ApplianceScreen> {
           (a) => ApplianceTile(
             appliance: a,
             onStatusChanged: (value) async {
-              final previousStatus = a.isOn;
-              setState(() => a.isOn = value);
-
               try {
                 await widget.onStatusChanged(a.name, value);
               } catch (error) {
                 if (!mounted) return;
-                setState(() => a.isOn = previousStatus);
+
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(content: Text('Failed to update ${a.name}: $error')),
                 );
@@ -1115,123 +1112,294 @@ class _EnergyAutomationScreenState extends State<EnergyAutomationScreen> {
   }
 }
 
-class ReportsScreen extends StatelessWidget {
+class ReportsScreen extends StatefulWidget {
   const ReportsScreen({super.key});
 
   @override
+  State<ReportsScreen> createState() => _ReportsScreenState();
+}
+
+class _ReportsScreenState extends State<ReportsScreen> {
+  late Future<Map<String, dynamic>> summaryFuture;
+  late Future<List<dynamic>> breakdownFuture;
+  late Future<List<dynamic>> dailyFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    loadReports();
+  }
+
+  void loadReports() {
+    summaryFuture = ApiService.getReportsSummary();
+    breakdownFuture = ApiService.getApplianceBreakdown();
+    dailyFuture = ApiService.getDailyReport();
+  }
+
+  Future<void> refreshReports() async {
+    setState(loadReports);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-      children: [
-        const AppHeader(
-          title: 'Energy Reports',
-          leftIcon: Icons.arrow_back_ios_new,
-          rightIcon: Icons.calendar_month,
-        ),
-        Row(
-          children: [
-            tabButton('Daily', true),
-            tabButton('Weekly', false),
-            tabButton('Monthly', false),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.all(18),
-          decoration: cardDecoration(const Color(0xffEEF6FF)),
-          child: const Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    return FutureBuilder<Map<String, dynamic>>(
+      future: summaryFuture,
+      builder: (context, summarySnapshot) {
+        if (summarySnapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        if (summarySnapshot.hasError) {
+          return ListView(
+            padding: const EdgeInsets.all(20),
             children: [
-              Text(
-                'Today’s Energy Summary',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+              const AppHeader(
+                title: 'Energy Reports',
+                leftIcon: Icons.arrow_back_ios_new,
+                rightIcon: Icons.calendar_month,
               ),
-              SizedBox(height: 12),
-              Text(
-                '8.45 kWh',
-                style: TextStyle(
-                  fontSize: 34,
-                  color: Color(0xff0B6EF6),
-                  fontWeight: FontWeight.w900,
+              Container(
+                padding: const EdgeInsets.all(18),
+                decoration: cardDecoration(Colors.white),
+                child: Text(
+                  'Failed to load reports: ${summarySnapshot.error}',
+                  style: const TextStyle(color: Colors.red),
                 ),
               ),
-              SizedBox(height: 4),
-              Text(
-                'Total consumption recorded today',
-                style: TextStyle(color: Colors.black54),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: refreshReports,
+                child: const Text('Retry'),
+              ),
+            ],
+          );
+        }
+
+        final summary = summarySnapshot.data ?? {};
+        final totalEnergy = (summary['total_energy'] ?? 0).toDouble();
+        final peakUsage = (summary['peak_usage'] ?? 0).toDouble();
+        final averageUsage = (summary['average_usage'] ?? 0).toDouble();
+        final estimatedSavings = (summary['estimated_savings'] ?? 0).toDouble();
+        final readingsCount = summary['readings_count'] ?? 0;
+
+        return RefreshIndicator(
+          onRefresh: refreshReports,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+            children: [
+              const AppHeader(
+                title: 'Energy Reports',
+                leftIcon: Icons.arrow_back_ios_new,
+                rightIcon: Icons.calendar_month,
+              ),
+              Row(
+                children: [
+                  tabButton('Daily', true),
+                  tabButton('Weekly', false),
+                  tabButton('Monthly', false),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(18),
+                decoration: cardDecoration(const Color(0xffEEF6FF)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Today’s Energy Summary',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      '${totalEnergy.toStringAsFixed(1)} W',
+                      style: const TextStyle(
+                        fontSize: 34,
+                        color: Color(0xff0B6EF6),
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '$readingsCount readings recorded',
+                      style: const TextStyle(color: Colors.black54),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  ReportMetricCard(
+                    title: 'Peak Load',
+                    value: '${peakUsage.toStringAsFixed(1)} W',
+                    icon: Icons.trending_up,
+                    color: Colors.red,
+                  ),
+                  const SizedBox(width: 10),
+                  ReportMetricCard(
+                    title: 'Savings',
+                    value: '${estimatedSavings.toStringAsFixed(1)} W',
+                    icon: Icons.savings,
+                    color: Colors.green,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  ReportMetricCard(
+                    title: 'Average Usage',
+                    value: '${averageUsage.toStringAsFixed(1)} W',
+                    icon: Icons.speed,
+                    color: const Color(0xff0B6EF6),
+                  ),
+                  const SizedBox(width: 10),
+                  ReportMetricCard(
+                    title: 'Readings',
+                    value: '$readingsCount',
+                    icon: Icons.data_usage,
+                    color: Colors.orange,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              FutureBuilder<List<dynamic>>(
+                future: dailyFuture,
+                builder: (context, dailySnapshot) {
+                  final dailyData = dailySnapshot.data ?? [];
+
+                  return Container(
+                    padding: const EdgeInsets.all(18),
+                    decoration: cardDecoration(Colors.white),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Consumption Pattern',
+                          style: TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'Energy readings by time',
+                          style: TextStyle(
+                            color: Colors.black54,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        if (dailySnapshot.connectionState ==
+                            ConnectionState.waiting)
+                          const Center(child: CircularProgressIndicator())
+                        else if (dailyData.isEmpty)
+                          const Text('No daily readings available.')
+                        else
+                          DynamicBarChart(
+                            values: dailyData
+                                .map((item) =>
+                                    (item['usage'] as num).toDouble())
+                                .toList(),
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(18),
+                decoration: cardDecoration(Colors.white),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'System Performance',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SummaryRow(
+                      label: 'Total Consumption',
+                      value: '${totalEnergy.toStringAsFixed(1)} W',
+                      color: const Color(0xff0B6EF6),
+                    ),
+                    SummaryRow(
+                      label: 'Peak Usage',
+                      value: '${peakUsage.toStringAsFixed(1)} W',
+                      color: Colors.red,
+                    ),
+                    SummaryRow(
+                      label: 'Average Usage',
+                      value: '${averageUsage.toStringAsFixed(1)} W',
+                      color: Colors.green,
+                    ),
+                    SummaryRow(
+                      label: 'Estimated Savings',
+                      value: '${estimatedSavings.toStringAsFixed(1)} W',
+                      color: Colors.green,
+                    ),
+                    SummaryRow(
+                      label: 'Energy Readings',
+                      value: '$readingsCount',
+                      color: Colors.orange,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              FutureBuilder<List<dynamic>>(
+                future: breakdownFuture,
+                builder: (context, breakdownSnapshot) {
+                  final breakdown = breakdownSnapshot.data ?? [];
+
+                  return Container(
+                    padding: const EdgeInsets.all(18),
+                    decoration: cardDecoration(Colors.white),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Appliance Consumption Breakdown',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        if (breakdownSnapshot.connectionState ==
+                            ConnectionState.waiting)
+                          const Center(child: CircularProgressIndicator())
+                        else if (breakdown.isEmpty)
+                          const Text('No appliance breakdown available.')
+                        else
+                          ...breakdown.map((item) {
+                            final name = item['name'] ?? 'Unknown';
+                            final usage =
+                                (item['usage'] as num?)?.toDouble() ?? 0;
+                            final percentage =
+                                (item['percentage'] as num?)?.toDouble() ?? 0;
+
+                            return ApplianceUsageRow(
+                              name: name,
+                              value: '${usage.toStringAsFixed(1)} W',
+                              percent: '${percentage.toStringAsFixed(1)}%',
+                              color: Colors.blue,
+                            );
+                          }),
+                      ],
+                    ),
+                  );
+                },
               ),
             ],
           ),
-        ),
-        const SizedBox(height: 16),
-        Row(
-          children: const [
-            ReportMetricCard(
-              title: 'Peak Load',
-              value: '2.10 kW',
-              icon: Icons.trending_up,
-              color: Colors.red,
-            ),
-            SizedBox(width: 10),
-            ReportMetricCard(
-              title: 'Savings',
-              value: '21%',
-              icon: Icons.savings,
-              color: Colors.green,
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.all(18),
-          decoration: cardDecoration(Colors.white),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Consumption Pattern', style: TextStyle(fontWeight: FontWeight.w900)),
-              const SizedBox(height: 6),
-              const Text('Hourly usage distribution', style: TextStyle(color: Colors.black54, fontSize: 12)),
-              const SizedBox(height: 20),
-              const BarChartMock(),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.all(18),
-          decoration: cardDecoration(Colors.white),
-          child: const Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('System Performance', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
-              SizedBox(height: 10),
-              SummaryRow(label: 'Total Consumption', value: '8.45 kWh', color: Color(0xff0B6EF6)),
-              SummaryRow(label: 'Peak Usage', value: '2.10 kW', color: Colors.red),
-              SummaryRow(label: 'Average Usage', value: '0.85 kW', color: Colors.green),
-              SummaryRow(label: 'Estimated Savings', value: '2.35 kWh', color: Colors.green),
-              SummaryRow(label: 'Automations Executed', value: '5', color: Colors.orange),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.all(18),
-          decoration: cardDecoration(Colors.white),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: const [
-              Text('Appliance Consumption Breakdown', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
-              SizedBox(height: 12),
-              ApplianceUsageRow(name: 'Electric Iron', value: '2.10 kWh', percent: '25%', color: Colors.pink),
-              ApplianceUsageRow(name: 'Washing Machine', value: '1.80 kWh', percent: '21%', color: Colors.indigo),
-              ApplianceUsageRow(name: 'Refrigerator', value: '1.50 kWh', percent: '18%', color: Colors.blue),
-              ApplianceUsageRow(name: 'Lighting', value: '1.20 kWh', percent: '14%', color: Colors.amber),
-              ApplianceUsageRow(name: 'Television', value: '0.95 kWh', percent: '11%', color: Colors.deepPurple),
-              ApplianceUsageRow(name: 'Security Cameras', value: '0.40 kWh', percent: '5%', color: Colors.teal),
-            ],
-          ),
-        ),
-      ],
+        );
+      },
     );
   }
 
@@ -1257,6 +1425,44 @@ class ReportsScreen extends StatelessWidget {
     );
   }
 }
+
+class DynamicBarChart extends StatelessWidget {
+  final List<double> values;
+
+  const DynamicBarChart({
+    super.key,
+    required this.values,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final maxValue = values.isEmpty
+        ? 1.0
+        : values.reduce((a, b) => a > b ? a : b);
+
+    return SizedBox(
+      height: 170,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: values.map((value) {
+          final height = maxValue == 0 ? 8.0 : (value / maxValue) * 140;
+
+          return Expanded(
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 3),
+              height: height < 8 ? 8 : height,
+              decoration: BoxDecoration(
+                color: const Color(0xff0B6EF6),
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+}
+
 
 
 class InfoCard extends StatelessWidget {
@@ -1409,6 +1615,7 @@ class ApplianceTile extends StatelessWidget {
     );
   }
 }
+
 
 class AlertItem {
   final IconData icon;
